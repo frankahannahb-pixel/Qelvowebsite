@@ -301,10 +301,19 @@
       reply: "Describe what you want to see — style, mood, subject — and I'll generate it for you." }
   };
 
-  let messageCount = 0;
   const FREE_LIMIT = 5;
   let currentMode = "chat";
   let conversationHistory = [];
+
+  function getDeviceId() {
+    let id = localStorage.getItem('qelvo_device_id');
+    if (!id) {
+      id = (crypto.randomUUID ? crypto.randomUUID() : 'dev-' + Date.now() + '-' + Math.random().toString(36).slice(2));
+      localStorage.setItem('qelvo_device_id', id);
+    }
+    return id;
+  }
+  const deviceId = getDeviceId();
 
   const thread = document.getElementById('thread');
   const input = document.getElementById('input');
@@ -336,8 +345,7 @@
     return msg.querySelector('.bubble');
   }
 
-  function updateUsage() {
-    const left = Math.max(FREE_LIMIT - messageCount, 0);
+  function updateUsage(left) {
     usageText.textContent = left + ' message' + (left === 1 ? '' : 's') + ' left today';
     topUsage.textContent = 'Free plan · ' + left + ' message' + (left === 1 ? '' : 's') + ' left today';
   }
@@ -346,16 +354,9 @@
     const text = input.value.trim();
     if (!text) return;
 
-    if (messageCount >= FREE_LIMIT) {
-      overlay.classList.add('open');
-      return;
-    }
-
     addMessage(text, 'user');
     input.value = '';
     input.style.height = 'auto';
-    messageCount++;
-    updateUsage();
 
     const bubble = addMessage('…', 'assistant');
 
@@ -366,9 +367,18 @@
         body: JSON.stringify({
           message: text,
           mode: currentMode,
-          history: conversationHistory
+          history: conversationHistory,
+          deviceId: deviceId
         })
       });
+
+      if (res.status === 402) {
+        bubble.remove();
+        updateUsage(0);
+        overlay.classList.add('open');
+        return;
+      }
+
       const data = await res.json();
 
       if (!res.ok) {
@@ -377,13 +387,15 @@
         bubble.textContent = data.reply;
         conversationHistory.push({ role: 'user', content: text });
         conversationHistory.push({ role: 'assistant', content: data.reply });
+        if (typeof data.remaining === 'number') {
+          updateUsage(data.remaining);
+          if (data.remaining <= 0) {
+            setTimeout(() => overlay.classList.add('open'), 500);
+          }
+        }
       }
     } catch (err) {
       bubble.textContent = "Couldn't connect to Qelvo right now. Check your connection and try again.";
-    }
-
-    if (messageCount >= FREE_LIMIT) {
-      setTimeout(() => overlay.classList.add('open'), 500);
     }
   }
 
